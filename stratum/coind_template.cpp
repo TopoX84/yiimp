@@ -1,6 +1,9 @@
 
 #include "stratum.h"
 
+static bool seed_init;
+static int  seed_count = 0;
+static uint256 active_seed;
 void coind_getauxblock(YAAMP_COIND *coind)
 {
 	if(!coind->isaux) return;
@@ -308,6 +311,23 @@ YAAMP_JOB_TEMPLATE *coind_create_template(YAAMP_COIND *coind)
 	const char *flags = json_get_string(json_coinbaseaux, "flags");
 	strcpy(templ->flags, flags ? flags : "");
 
+        const char *seed = json_get_string(json_result, "seed");
+        memcpy(templ->seed, seed, 64);
+///// check if we need to update dataset
+        uint256 seedHash = uint256S(templ->seed);
+//		stratumlog("seed_count %d seed_count/500 %d seed_count%500 %d\n",seed_count,seed_count/500,seed_count%500);
+			seed_count++;		
+		if (!seed_init) {
+			seed_init=true;
+			active_seed = seedHash;
+			init_dataset(active_seed);
+		}
+		if (active_seed!=seedHash)
+		{
+			active_seed = seedHash;
+			init_dataset(active_seed);
+		}
+		
 	// LBC Claim Tree (with wallet gbt patch)
 	const char *claim = json_get_string(json_result, "claimtrie");
 	if (claim) {

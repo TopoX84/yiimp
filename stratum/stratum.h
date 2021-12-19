@@ -22,16 +22,18 @@
 
 #include <iostream>
 #include <vector>
+#include <cassert>
 
 using namespace std;
 
 #include "iniparser/src/iniparser.h"
-
+#include "satoshi/uint256.h"
+#include "rx2.h"
 #include "json.h"
 #include "util.h"
 
 #define YAAMP_RESTARTDELAY		(24*60*60)
-#define YAAMP_MAXJOBDELAY		(2*60)
+#define YAAMP_MAXJOBDELAY		(4*60)
 #define CURL_RPC_TIMEOUT		(30)
 
 #define YAAMP_MS				1000
@@ -112,7 +114,8 @@ extern struct ifaddrs *g_ifaddr;
 extern pthread_mutex_t g_db_mutex;
 extern pthread_mutex_t g_nonce1_mutex;
 extern pthread_mutex_t g_job_create_mutex;
-
+extern pthread_mutex_t g_randomx_mutex;
+extern pthread_mutex_t g_randomx_mutex2;
 extern volatile bool g_exiting;
 
 #include "db.h"
@@ -146,6 +149,7 @@ void scrypt_N_R_1_256(const char* input, char* output, uint32_t N, uint32_t R, u
 
 void sha256_hash_hex(const char *input, char *output, unsigned int len);
 void sha256_double_hash_hex(const char *input, char *output, unsigned int len);
+void phi2_blockhash_hex(const char *input, char *output, unsigned int len);
 
 #include "algos/a5a.h"
 #include "algos/c11.h"

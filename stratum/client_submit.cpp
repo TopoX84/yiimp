@@ -31,25 +31,21 @@ void build_submit_values(YAAMP_JOB_VALUES *submitvalues, YAAMP_JOB_TEMPLATE *tem
 #ifdef MERKLE_DEBUGLOG
 	printf("merkle root %s\n", merkleroot.c_str());
 #endif
-	if (!strcmp(g_stratum_algo, "lbry")) {
-		sprintf(submitvalues->header, "%s%s%s%s%s%s%s", templ->version, templ->prevhash_be, submitvalues->merkleroot_be,
-			templ->claim_be, ntime, templ->nbits, nonce);
-		ser_string_be(submitvalues->header, submitvalues->header_be, 112/4);
-	} else if (strlen(templ->extradata_be) == 128) { // LUX SC
-		sprintf(submitvalues->header, "%s%s%s%s%s%s%s", templ->version, templ->prevhash_be, submitvalues->merkleroot_be,
-			ntime, templ->nbits, nonce, templ->extradata_be);
+	{
+		sprintf(submitvalues->header, "%s%s%s%s%s%s%s", templ->version, templ->prevhash_be, submitvalues->merkleroot_be, ntime, templ->nbits, nonce, templ->extradata_be);
 		ser_string_be(submitvalues->header, submitvalues->header_be, 36); // 80+64 / sizeof(u32)
-	} else {
-		sprintf(submitvalues->header, "%s%s%s%s%s%s", templ->version, templ->prevhash_be, submitvalues->merkleroot_be,
-			ntime, templ->nbits, nonce);
-		ser_string_be(submitvalues->header, submitvalues->header_be, 20);
 	}
 
 	binlify(submitvalues->header_bin, submitvalues->header_be);
+        int header_len = strlen(submitvalues->header)/2;
 
-//	printf("%s\n", submitvalues->header_be);
-	int header_len = strlen(submitvalues->header)/2;
-	g_current_algo->hash_function((char *)submitvalues->header_bin, (char *)submitvalues->hash_bin, header_len);
+//	printf("blkheader:   %s\n", submitvalues->header_be);
+//        printf("curseed:     %s\n", templ->seed);
+//        printf("\n");
+
+        // convert seed from hexstr to bin
+        uint256 seedHash = uint256S(templ->seed);
+        rx_slow_hash((char *)submitvalues->header_bin, (char *)submitvalues->hash_bin, 144, seedHash);
 
 	hexlify(submitvalues->hash_hex, submitvalues->hash_bin, 32);
 	string_be(submitvalues->hash_hex, submitvalues->hash_be);
@@ -145,11 +141,10 @@ static void client_do_submit(YAAMP_CLIENT *client, YAAMP_JOB *job, YAAMP_JOB_VAL
 	if(job->block_found) return;
 	if(job->deleted) return;
 
-	uint64_t hash_int = get_hash_difficulty(submitvalues->hash_bin);
-	uint64_t coin_target = decode_compact(templ->nbits);
-	if (templ->nbits && !coin_target) coin_target = 0xFFFF000000000000ULL;
+        uint64_t hash_int = * (uint64_t *) &submitvalues->hash_bin[24];
+        uint64_t coin_target = decode_compact(templ->nbits) / 0x10000;
 
-	int block_size = YAAMP_SMALLBUFSIZE;
+	int block_size = 4*YAAMP_SMALLBUFSIZE;
 	vector<string>::const_iterator i;
 
 	for(i = templ->txdata.begin(); i != templ->txdata.end(); ++i)
@@ -216,7 +211,9 @@ static void client_do_submit(YAAMP_CLIENT *client, YAAMP_JOB *job, YAAMP_JOB_VAL
 		}
 	}
 
-	if(hash_int <= coin_target)
+        double coin_diff = target_to_diff(coin_target);
+        double share_diff = target_to_diff(hash_int);
+        if(share_diff > coin_diff)
 	{
 		char count_hex[8] = { 0 };
 		if (templ->txcount <= 252)
@@ -250,6 +247,8 @@ static void client_do_submit(YAAMP_CLIENT *client, YAAMP_JOB *job, YAAMP_JOB_VAL
 				snprintf(block_hex, block_size, "%s", hex);
 		}
 
+                debuglog("debugblockhex: %s\n", block_hex);
+
 		bool b = coind_submit(coind, block_hex);
 		if(b)
 		{
@@ -262,6 +261,8 @@ static void client_do_submit(YAAMP_CLIENT *client, YAAMP_JOB *job, YAAMP_JOB_VAL
 			memset(doublehash2, 0, 128);
 
 			YAAMP_HASH_FUNCTION merkle_hash = sha256_double_hash_hex;
+            if (!strcmp("rx2", coind->algo))
+                                merkle_hash = phi2_blockhash_hex;			
 			//if (g_current_algo->merkle_func)
 			//	merkle_hash = g_current_algo->merkle_func;
 
@@ -386,17 +387,13 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	string_lower(ntime);
 	string_lower(nonce);
 
-	if (json_params->u.array.length == 6) {
-		if (strstr(g_stratum_algo, "phi")) {
+        if (json_params->u.array.length == 6) {
+
 			// lux optional field, smart contral root hashes (not mandatory on shares submit)
 			strncpy(extra, json_params->u.array.values[5]->u.string.ptr, 128);
 			string_lower(extra);
-		} else {
-			// heavycoin vote
-			strncpy(vote, json_params->u.array.values[5]->u.string.ptr, 7);
-			string_lower(vote);
-		}
-	}
+
+        }
 
 	if (g_debuglog_hash) {
 		debuglog("submit %s (uid %d) %d, %s, t=%s, n=%s, extra=%s\n", client->sock->ip, client->userid,
@@ -495,33 +492,23 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 		lyra2z_height = templ->height;
 	}
 
-	// minimum hash diff begins with 0000, for all...
-	uint8_t pfx = submitvalues.hash_bin[30] | submitvalues.hash_bin[31];
-	if(pfx) {
-		if (g_debuglog_hash) {
-			debuglog("Possible %s error, hash starts with %02x%02x%02x%02x\n", g_current_algo->name,
-				(int) submitvalues.hash_bin[31], (int) submitvalues.hash_bin[30],
-				(int) submitvalues.hash_bin[29], (int) submitvalues.hash_bin[28]);
-		}
-		client_submit_error(client, job, 25, "Invalid share", extranonce2, ntime, nonce);
-		return true;
-	}
+        uint64_t hash_int = * (uint64_t *) &submitvalues.hash_bin[24];
+        uint64_t user_target = share_to_target(client->difficulty_actual) * g_current_algo->diff_multiplier;
 
-	uint64_t hash_int = get_hash_difficulty(submitvalues.hash_bin);
-	uint64_t user_target = diff_to_target(client->difficulty_actual);
-	uint64_t coin_target = decode_compact(templ->nbits);
-	if (templ->nbits && !coin_target) coin_target = 0xFFFF000000000000ULL;
+        uint64_t coin_target = decode_compact(templ->nbits);
+        if (templ->nbits && !coin_target) coin_target = 0xFFFF000000000000ULL; // under decode_compact min diff
+        double coin_diff = target_to_diff(coin_target);
+        double share_diff = target_to_diff(hash_int);
 
-	if (g_debuglog_hash) {
-		debuglog("%016llx actual\n", hash_int);
-		debuglog("%016llx target\n", user_target);
-		debuglog("%016llx coin\n", coin_target);
-	}
-	if(hash_int > user_target && hash_int > coin_target)
-	{
-		client_submit_error(client, job, 26, "Low difficulty share", extranonce2, ntime, nonce);
-		return true;
-	}
+//        debuglog("\n");
+//        debuglog("hash %016llx \n", hash_int);
+//        debuglog("shar %016llx \n", user_target);
+
+        if(hash_int > user_target)
+        {
+                client_submit_error(client, job, 26, "Low difficulty share", extranonce2, ntime, nonce);
+                return true;
+        }
 
 	if(job->coind)
 		client_do_submit(client, job, &submitvalues, extranonce2, ntime, nonce, vote);
@@ -537,7 +524,6 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 		if (!client_ask_stats(client)) client->stats = false;
 	}
 
-	double share_diff = diff_to_target(hash_int);
 //	if (g_current_algo->diff_multiplier != 0) {
 //		share_diff = share_diff / g_current_algo->diff_multiplier;
 //	}

@@ -235,6 +235,7 @@ void block_add(int userid, int workerid, int coinid, int height, double diff, do
 bool block_confirm(int coinid, const char *blockhash)
 {
 	char hash[192];
+	bool IsRX2 = false;
 	if(strlen(blockhash) < 64) return false;
 
 	snprintf(hash, 161, "%s", blockhash);
@@ -244,6 +245,9 @@ bool block_confirm(int coinid, const char *blockhash)
 	for(CLI li = g_list_coind.first; li ; li = li->next)
 	{
 		YAAMP_COIND *coind = (YAAMP_COIND *)li->data;
+        if (coind->id == coinid && !strcmp("rx2", coind->algo))
+                    IsRX2 =true;		
+
 		if(coind->id != coinid || coind->deleted) continue;
 
 		if(coind->multialgos) {
@@ -265,7 +269,7 @@ bool block_confirm(int coinid, const char *blockhash)
 			if (h1) snprintf(hash, 161, "%s", h1);
 			else if (h2) snprintf(hash, 161, "%s", h2);
 			else if (h3) snprintf(hash, 161, "%s", h3);
-			//debuglog("%s: getblock %s -> pow %s\n", __func__, blockhash, hash);
+			debuglog("%s: getblock %s -> pow %s\n", __func__, blockhash, hash);
 			json_value_free(json);
 			break;
 		} else if (strcmp(coind->symbol,"ORB") == 0) {
@@ -296,7 +300,12 @@ bool block_confirm(int coinid, const char *blockhash)
 		{
 			if(strcmp(block->hash1, hash) && strcmp(block->hash2, hash)) continue;
 			if (!block->confirmed) {
-				debuglog("*** CONFIRMED %d : %s\n", block->height, block->hash2);
+
+ 				if (IsRX2)
+                    debuglog("*** CONFIRMED %d : %s\n", block->height, block->hash1);
+                else
+                    debuglog("*** CONFIRMED %d : %s\n", block->height, block->hash2);
+
 				strncpy(block->hash, blockhash, 65);
 				block->confirmed = true;
 			}

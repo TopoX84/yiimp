@@ -1,4 +1,3 @@
-
 #include "stratum.h"
 #include <signal.h>
 #include <sys/resource.h>
@@ -64,6 +63,13 @@ YAAMP_DB *g_db = NULL;
 pthread_mutex_t g_db_mutex;
 pthread_mutex_t g_nonce1_mutex;
 pthread_mutex_t g_job_create_mutex;
+
+pthread_mutex_t g_randomx_mutex;  //= PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t g_randomx_mutex2; //= PTHREAD_MUTEX_INITIALIZER;
+/*
+pthread_cond_t  g_randomx_cond1 = PTHREAD_COND_INITIALIZER;
+pthread_cond_t  g_randomx_cond2 = PTHREAD_COND_INITIALIZER;
+*/
 
 struct ifaddrs *g_ifaddr;
 
@@ -205,7 +211,7 @@ YAAMP_ALGO g_algos[] =
 	{"whirlcoin", whirlpool_hash, 1, 0, sha256_hash_hex }, /* old sha merkleroot */
 	{"whirlpool", whirlpool_hash, 1, 0 }, /* sha256d merkleroot */
 	{"whirlpoolx", whirlpoolx_hash, 1, 0, 0},
-
+    {"rx2", scrypt_hash, 0x100, 0, 0}, 
 	{"", NULL, 0, 0},
 };
 
@@ -320,7 +326,8 @@ int main(int argc, char **argv)
 	yaamp_create_mutex(&g_db_mutex);
 	yaamp_create_mutex(&g_nonce1_mutex);
 	yaamp_create_mutex(&g_job_create_mutex);
-
+	yaamp_create_mutex(&g_randomx_mutex);
+	yaamp_create_mutex(&g_randomx_mutex2);
 	YAAMP_DB *db = db_connect();
 	if(!db) yaamp_error("Cant connect database");
 
@@ -341,7 +348,8 @@ int main(int argc, char **argv)
 	pthread_t thread2;
 	pthread_create(&thread2, NULL, stratum_thread, NULL);
 
-	sleep(20);
+        // printf("initializing randomx vm...");
+        // randomx_init();
 
 	while(!g_exiting)
 	{
@@ -406,7 +414,7 @@ void *monitor_thread(void *p)
 			stratumlogdate("%s dead lock, exiting...\n", g_stratum_algo);
 			exit(1);
 		}
-
+g_max_shares=0;
 		if(g_max_shares && g_shares_counter) {
 
 			if((g_shares_counter - g_shares_log) > 10000) {
@@ -444,9 +452,12 @@ void *stratum_thread(void *p)
 
 	res = listen(listen_sock, 4096);
 	if(res < 0) yaamp_error("listen");
-
+  	int num_cores = sysconf(_SC_NPROCESSORS_ONLN);
+	stratumlog("number of thread = %d\n",num_cores);
 	/////////////////////////////////////////////////////////////////////////
-
+		cpu_set_t cpuset;
+		pthread_attr_t attr;	
+		pthread_attr_init(&attr);
 	int failcount = 0;
 	while(!g_exiting)
 	{
@@ -467,7 +478,12 @@ void *stratum_thread(void *p)
 
 		failcount = 0;
 		pthread_t thread;
-		int res = pthread_create(&thread, NULL, client_thread, (void *)(long)sock);
+		int random_core = rand()%num_cores;
+		CPU_ZERO(&cpuset);
+		CPU_SET(random_core,&cpuset);
+		int s = pthread_attr_setaffinity_np(&attr, sizeof(cpu_set_t), &cpuset);
+		int res = pthread_create(&thread, &attr, client_thread, (void *)(long)sock);		
+//		int res = pthread_create(&thread, NULL, client_thread, (void *)(long)sock);
 		if(res != 0)
 		{
 			int error = errno;
