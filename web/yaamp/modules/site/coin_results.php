@@ -297,9 +297,15 @@ echo <<<end
 end;
 
 $account = '';
-if ($DCR || $DGB) $account = '*';
-else if ($ETH) $account = $coin->master_wallet;
-
+if ($DCR || $DGB) {
+    $account = '*';
+} elseif ($ETH) {
+    $account = $coin->master_wallet;
+}
+// Add your coin symbol here VVVVV
+elseif ($coin->symbol == "RNG"||$coin->symbol == "TDC"||$coin->symbol == "OBTC"||$coin->symbol == "LUX") {
+    $account = '*';
+}
 $txs = $remote->listtransactions($account, $maxrows);
 
 if (empty($txs)) {
